@@ -227,3 +227,38 @@ When `version_control_system_type = "github"`:
 - **GitHub App**: The GitHub App must be installed on the target repository or organization with the `Administration: Read & write` permission so it can mint registration tokens. The module accepts the App ID, installation ID, and PEM private key via the `version_control_system_*` variables.
 
 The module never grants the GitHub credential any Azure role - it is consumed only inside the agent container to register runners with GitHub.
+
+## Network Egress Requirements
+
+When deploying runners in private networking (`virtual_network_address_space` provided or `virtual_network_creation_enabled = false` with BYO VNet), ensure the following FQDNs are reachable through your firewall / network security controls:
+
+### GitHub Runners
+
+| Category | FQDNs | Port | Rationale |
+|----------|-------|------|-----------|
+| **GitHub Actions (CRITICAL)** | `*.actions.githubusercontent.com` | 443/TCP | Self-hosted runner backend connection for job polling, logs, and artifacts. Includes regional endpoints like `pipelinesghubeus4.actions.githubusercontent.com`, `vstoken.actions.githubusercontent.com`. |
+| **GitHub Core** | `github.com`, `*.github.com`, `api.github.com` | 443/TCP | Runner registration, token refresh, API calls |
+| **Artifacts & Packages** | `objects.githubusercontent.com`, `pkg-containers.githubusercontent.com`, `*.ghcr.io`, `ghcr.io` | 443/TCP | Workflow artifact upload/download, container image pulls from GitHub Container Registry |
+| **Azure Storage (if applicable)** | `*.blob.core.windows.net` | 443/TCP | Terraform state, artifact caching, or other blob-backed workflows. If using Private Endpoints, the FQDN resolves privately via PDNS but SNI still matches the public zone. |
+
+### Azure DevOps Agents
+
+| Category | FQDNs | Port | Rationale |
+|----------|-------|------|-----------|
+| **Azure DevOps (CRITICAL)** | `*.dev.azure.com`, `*.visualstudio.com`, `*.vsassets.io`, `*.vssps.visualstudio.com` | 443/TCP | Agent communication, job download, artifact upload. |
+| **Azure CDN** | `*.blob.core.windows.net`, `*.vsblob.visualstudio.com` | 443/TCP | Agent binaries, task downloads, artifact storage. |
+| **Azure Artifacts** | `*.pkgs.visualstudio.com` | 443/TCP | NuGet, npm, Python package feeds hosted in Azure Artifacts. |
+
+### Container Registry & Images (Both GitHub and Azure DevOps)
+
+If the module creates a container registry (`container_registry_creation_enabled = true` or BYO registry), runners must reach:
+- `<your-acr>.azurecr.io` (your ACR FQDN)
+- `mcr.microsoft.com`, `*.data.mcr.microsoft.com`, `*.cdn.mscr.io` (if pulling base images from MCR)
+
+**Force-tunneled deployments (UDR 0.0.0.0/0 → Azure Firewall):** Configure application rules in your Azure Firewall Policy with the above FQDNs. Use wildcard FQDNs where shown (e.g., `*.actions.githubusercontent.com`, not specific regional endpoints) to avoid breakage when GitHub shifts traffic.
+
+**NAT Gateway egress (no firewall inspection):** No additional configuration required; internet traffic routes directly.
+
+**Validation:** After deployment, check runner logs (`az containerapp job execution logs show` or `az container logs show`) for `curl: (22) error: 403` or connection failures. Query your firewall logs for DENY events from the runner subnet and add missing FQDNs to your allow list.
+
+**Historical note:** Runners deployed in VNet-integrated / force-tunneled mode will fail silently if `*.actions.githubusercontent.com` is not explicitly allowed at the firewall — KEDA autoscale will trigger correctly, but every execution will abort with a 403 backend connection error.
