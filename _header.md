@@ -227,3 +227,7 @@ When `version_control_system_type = "github"`:
 - **GitHub App**: The GitHub App must be installed on the target repository or organization with the `Administration: Read & write` permission so it can mint registration tokens. The module accepts the App ID, installation ID, and PEM private key via the `version_control_system_*` variables.
 
 The module never grants the GitHub credential any Azure role - it is consumed only inside the agent container to register runners with GitHub.
+
+## Network egress requirements
+
+Force-tunneled ALZ spokes must allow the runner dependencies documented in [EGRESS.md](./EGRESS.md) at the hub Azure Firewall. The canonical implemented list for this estate is maintained in `alz-avm-tf-demo/alz-firewall-ops` as `FIREWALL-EGRESS-IMPLEMENTED.md`.
